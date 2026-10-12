@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visualisation exploratoire — TP D3.js</title>
+  <script src="data.js"></script>
+  <script src="d3.v7.min.js"></script>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, sans-serif; color: #182230; background: #f5f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; }
+    header, section { max-width: 1500px; margin: 0 auto 20px; }
+    h1 { margin-bottom: 4px; }
+    .muted { color: #64748b; }
+    .panel { background: white; border: 1px solid #dce3ed; border-radius: 12px; padding: 18px; margin-bottom: 18px; box-shadow: 0 3px 12px #1725540a; }
+    .panel h2 { font-size: 1.12rem; margin: 0 0 12px; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+    .controls { display: flex; flex-wrap: wrap; align-items: end; gap: 18px; }
+    .control { display: flex; flex-direction: column; gap: 6px; min-width: 180px; }
+    label { font-size: .9rem; font-weight: 650; }
+    select, input[type=number] { padding: 8px 10px; border: 1px solid #b9c5d5; border-radius: 7px; font: inherit; background: white; }
+    input[type=range] { width: 240px; }
+    button { padding: 8px 12px; border: 1px solid #b9c5d5; border-radius: 7px; background: #fff; cursor: pointer; font: inherit; }
+    button:hover { background: #eef4ff; }
+    .status { font-size: .9rem; color: #475569; margin-top: 10px; }
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 18px; }
+    svg { width: 100%; height: auto; display: block; overflow: visible; }
+    .axis path, .axis line { stroke: #94a3b8; }
+    .axis text { fill: #475569; font-size: 10px; }
+    .gridline line { stroke: #e8edf4; }
+    .point { cursor: pointer; stroke: #fff; stroke-width: .5px; }
+    .point.selected { stroke: #111827; stroke-width: 1.8px; }
+    .point.dimmed { opacity: .18; }
+    .line { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+    .dimension { cursor: pointer; }
+    .dimension path { fill: none; stroke: #64748b; stroke-width: 1.1; }
+    .dimension.selected path { stroke: #2563eb; stroke-width: 2.5; }
+    .dimension text { font-size: 10px; fill: #334155; }
+    .brush .selection { fill: #60a5fa; fill-opacity: .22; stroke: #2563eb; }
+    .bar { fill: #93c5fd; stroke: #2563eb; stroke-width: .8; }
+    .density { fill: none; stroke: #dc2626; stroke-width: 2.5; }
+    .legend { display:flex; flex-wrap:wrap; gap:16px; font-size:.85rem; color:#475569; margin-top:8px; }
+    .swatch { display:inline-block; width:12px; height:12px; margin-right:5px; border-radius:3px; vertical-align:-1px; }
+    .error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 8px; }
+    @media (min-width: 1050px) { .global-charts { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Visualisation exploratoire des données</h1>
+  <div class="muted">Matrice de scatterplots · Coordonnées parallèles · Histogramme et densité gaussienne</div>
+  <p class="muted">Clique sur un point ou utilise les sélections par brossage. La sélection est synchronisée entre les vues.</p>
+</header>
+
+<section id="errorBox" hidden></section>
+
+<section class="panel">
+  <h2>Paramètres de la distribution</h2>
+  <div class="controls">
+    <div class="control">
+      <label for="dimensionSelect">Dimension à afficher</label>
+      <select id="dimensionSelect"></select>
+    </div>
+    <div class="control">
+      <label for="binsInput">Nombre de bins (entier)</label>
+      <input id="binsInput" type="number" min="1" max="100" step="1" value="15" inputmode="numeric">
+    </div>
+    <div class="control">
+      <label for="bandwidthInput">Lissage gaussien (h) : <span id="bandwidthValue">—</span></label>
+      <input id="bandwidthInput" type="range" min="0.05" max="2" step="0.05" value="0.35">
+    </div>
+    <button id="clearSelection" type="button">Effacer la sélection</button>
+  </div>
+  <div class="status" id="selectionStatus">Aucune sélection.</div>
+</section>
+
+<section class="charts global-charts">
+  <div class="panel">
+    <h2>Matrice de scatterplots</h2>
+    <div id="scatterMatrix"></div>
+    <div class="legend"><span><i class="swatch" style="background:#2563eb"></i>Individus sélectionnés</span><span><i class="swatch" style="background:#cbd5e1"></i>Autres individus</span></div>
+  </div>
+  <div class="panel">
+    <h2>Coordonnées parallèles</h2>
+    <div id="parallelCoordinates"></div>
+    <p class="muted">Fais glisser sur un axe pour sélectionner une plage de valeurs. Clique sur le nom d'un attribut pour l'utiliser dans l'histogramme.</p>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Histogramme et densité à noyau gaussien</h2>
+  <div id="distribution"></div>
+  <div class="legend"><span><i class="swatch" style="background:#93c5fd;border:1px solid #2563eb"></i>Histogramme (densité)</span><span><i class="swatch" style="background:#dc2626"></i>Densité à noyau gaussien</span></div>
+</section>
+
+<script>
+(() => {
+  const errorBox = document.getElementById("errorBox");
+  const showError = message => {
+    errorBox.hidden = false;
+    errorBox.className = "error";
+    errorBox.textContent = message;
+  };
+
+  if (typeof d3 === "undefined") {
+    showError("D3.js n'a pas été chargé. Vérifie que d3.v7.min.js se trouve dans le même dossier que ce fichier HTML.");
+    return;
+  }
+  if (typeof data === "undefined" || !Array.isArray(data) || data.length === 0) {
+    showError("Le tableau « data » est introuvable ou vide. Vérifie l'import de data.js et assure-toi qu'il définit un tableau nommé data.");
+    return;
+  }
+
+  const numeric = v => v !== null && v !== "" && Number.isFinite(Number(v));
+  const keys = Object.keys(data[0]).filter(k => data.some(d => numeric(d[k])));
+  const rows = data.map((d, i) => {
+    const row = { __id: i, __raw: d };
+    keys.forEach(k => row[k] = numeric(d[k]) ? Number(d[k]) : NaN);
+    return row;
+  });
+  const dimensions = keys.filter(k => rows.some(d => Number.isFinite(d[k])));
+
+  if (dimensions.length < 2) {
+    showError("Il faut au moins deux dimensions numériques pour créer les visualisations. Dimensions détectées : " + dimensions.join(", "));
+    return;
+  }
+
+  const selected = new Set();
+  const scatterNode = document.getElementById("scatterMatrix");
+  const parallelNode = document.getElementById("parallelCoordinates");
+  const distributionNode = document.getElementById("distribution");
+  const dimensionSelect = document.getElementById("dimensionSelect");
+  const binsInput = document.getElementById("binsInput");
+  const bandwidthInput = document.getElementById("bandwidthInput");
+  const bandwidthValue = document.getElementById("bandwidthValue");
+  const status = document.getElementById("selectionStatus");
+  dimensions.forEach(k => dimensionSelect.add(new Option(k, k)));
+
+  const color = d => selected.has(d.__id) ? "#2563eb" : "#cbd5e1";
+  const isDimmed = d => selected.size > 0 && !selected.has(d.__id);
+  const validRows = key => rows.filter(d => Number.isFinite(d[key]));
+  const fmt = d3.format(".3~g");
+
+  function updateStatus() {
+    status.textContent = selected.size
+      ? `${selected.size} individu(s) sélectionné(s) sur ${rows.length}.`
+      : "Aucune sélection.";
+  }
+  function selectIds(ids, additive = false) {
+    if (!additive) selected.clear();
+    ids.forEach(id => selected.add(id));
+    renderHighlights();
+  }
+  function renderHighlights() {
+    d3.select(scatterNode).selectAll(".point")
+      .attr("fill", d => color(d))
+      .classed("selected", d => selected.has(d.__id))
+      .classed("dimmed", d => isDimmed(d));
+    d3.select(parallelNode).selectAll(".individual")
+      .attr("stroke", d => color(d))
+      .attr("opacity", d => isDimmed(d) ? 0.12 : (selected.has(d.__id) ? 0.95 : 0.48))
+      .attr("stroke-width", d => selected.has(d.__id) ? 2.2 : 1);
+    updateStatus();
+  }
+
+  function drawScatterMatrix() {
+    scatterNode.innerHTML = "";
+    const n = dimensions.length;
+    const cell = n > 8 ? 105 : n > 5 ? 125 : 155;
+    const margin = { top: 12, right: 8, bottom: 8, left: 8 };
+    const width = n * cell + margin.left + margin.right;
+    const height = n * cell + margin.top + margin.bottom;
+    const svg = d3.select(scatterNode).append("svg")
+      .attr("viewBox", `0 0 ${width} ${height}`).attr("role", "img")
+      .attr("aria-label", "Matrice de scatterplots");
+    const scales = {};
+    dimensions.forEach(k => {
+      const vals = validRows(k).map(d => d[k]);
+      let ext = d3.extent(vals);
+      if (ext[0] === ext[1]) ext = [ext[0] - 1, ext[1] + 1];
+      scales[k] = d3.scaleLinear().domain(ext).nice().range([8, cell - 25]);
+    });
+
+    dimensions.forEach((yKey, r) => {
+      dimensions.forEach((xKey, c) => {
+        const gx = margin.left + c * cell;
+        const gy = margin.top + r * cell;
+        const g = svg.append("g").attr("transform", `translate(${gx},${gy})`);
+        if (r === c) {
+          g.append("text").attr("x", cell / 2).attr("y", cell / 2)
+            .attr("text-anchor", "middle").attr("font-size", 11).attr("font-weight", 700)
+            .text(xKey.length > 19 ? xKey.slice(0, 17) + "…" : xKey)
+            .append("title").text(xKey);
+          g.append("line").attr("x1", 5).attr("x2", cell - 10).attr("y1", cell - 20).attr("y2", cell - 20).attr("stroke", "#e2e8f0");
+          return;
+        }
+        const x = d3.scaleLinear().domain(scales[xKey].domain()).range([8, cell - 12]);
+        const y = d3.scaleLinear().domain(scales[yKey].domain()).range([cell - 22, 8]);
+        g.append("rect").attr("x", 3).attr("y", 3).attr("width", cell - 8).attr("height", cell - 8)
+          .attr("fill", "#fbfdff").attr("stroke", "#e2e8f0");
+        g.selectAll("circle").data(rows.filter(d => Number.isFinite(d[xKey]) && Number.isFinite(d[yKey])))
+          .join("circle").attr("class", "point").attr("r", n > 8 ? 1.8 : 2.6)
+          .attr("cx", d => x(d[xKey])).attr("cy", d => y(d[yKey]))
+          .attr("fill", color).attr("opacity", d => isDimmed(d) ? .18 : .8)
+          .classed("selected", d => selected.has(d.__id))
+          .on("click", (event, d) => {
+            if (event.ctrlKey || event.metaKey || event.shiftKey) {
+              selected.has(d.__id) ? selected.delete(d.__id) : selected.add(d.__id);
+              renderHighlights();
+            } else selectIds([d.__id]);
+          }).append("title").text(d => `${xKey}: ${fmt(d[xKey])}\n${yKey}: ${fmt(d[yKey])}\nIndividu #${d.__id + 1}`);
+        if (r === n - 1) g.append("text").attr("x", cell / 2).attr("y", cell - 2).attr("text-anchor", "middle").attr("font-size", 9).text(xKey.length > 13 ? xKey.slice(0, 11) + "…" : xKey);
+        if (c === 0) g.append("text").attr("transform", "rotate(-90)").attr("x", -cell / 2).attr("y", 8).attr("text-anchor", "middle").attr("font-size", 9).text(yKey.length > 13 ? yKey.slice(0, 11) + "…" : yKey);
+      });
+    });
+  }
+
+  function drawParallel() {
+    parallelNode.innerHTML = "";
+    const width = Math.max(520, parallelNode.clientWidth || 600);
+    const height = Math.max(390, Math.min(540, 34 * dimensions.length + 150));
+    const margin = { top: 35, right: 25, bottom: 25, left: 25 };
+    const x = d3.scalePoint().domain(dimensions).range([margin.left, width - margin.right]);
+    const y = {};
+    dimensions.forEach(k => {
+      const vals = validRows(k).map(d => d[k]);
+      let ext = d3.extent(vals);
+      if (ext[0] === ext[1]) ext = [ext[0] - 1, ext[1] + 1];
+      y[k] = d3.scaleLinear().domain(ext).nice().range([height - margin.bottom, margin.top]);
+    });
+    const line = d3.line().defined(([, v]) => Number.isFinite(v)).x(([k]) => x(k)).y(([k, v]) => y[k](v));
+    const svg = d3.select(parallelNode).append("svg").attr("viewBox", `0 0 ${width} ${height}`);
+    const pathGroup = svg.append("g");
+    pathGroup.selectAll("path").data(rows).join("path")
+      .attr("class", "individual line").attr("d", d => line(dimensions.map(k => [k, d[k]])))
+      .attr("fill", "none").attr("stroke", color)
+      .attr("opacity", d => isDimmed(d) ? .12 : .48)
+      .attr("stroke-width", d => selected.has(d.__id) ? 2.2 : 1)
+      .on("click", (event, d) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey) {
+          selected.has(d.__id) ? selected.delete(d.__id) : selected.add(d.__id);
+          renderHighlights();
+        } else selectIds([d.__id]);
+      }).append("title").text(d => `Individu #${d.__id + 1}`);
+
+    const axes = svg.selectAll(".dimension").data(dimensions).join("g")
+      .attr("class", "dimension").attr("transform", k => `translate(${x(k)},0)`)
+      .on("click", (event, k) => { dimensionSelect.value = k; drawDistribution(); });
+    axes.append("g").attr("class", "axis").each(function(k) {
+      d3.select(this).call(d3.axisLeft(y[k]).ticks(5).tickFormat(d3.format("~g")));
+    });
+    axes.append("text").attr("y", 15).attr("text-anchor", "middle")
+      .text(k => k.length > 15 ? k.slice(0, 13) + "…" : k)
+      .append("title").text(k => k);
+    axes.append("g").attr("class", "brush").each(function(k) {
+      d3.select(this).call(d3.brushY().extent([[-10, margin.top], [10, height - margin.bottom]])
+        .on("end", event => {
+          if (!event.selection) return;
+          const [a, b] = event.selection.map(y[k].invert).sort((p, q) => p - q);
+          const ids = rows.filter(d => Number.isFinite(d[k]) && d[k] >= a && d[k] <= b).map(d => d.__id);
+          selectIds(ids);
+        }));
+    });
+  }
+
+  function gaussian(u) {
+    return Math.exp(-0.5 * u * u) / Math.sqrt(2 * Math.PI);
+  }
+
+  function drawDistribution() {
+    distributionNode.innerHTML = "";
+    const key = dimensionSelect.value || dimensions[0];
+    const values = validRows(key).map(d => d[key]);
+    if (!values.length) {
+      distributionNode.textContent = "Aucune valeur numérique pour cette dimension.";
+      return;
+    }
+    let [min, max] = d3.extent(values);
+    if (min === max) { min -= 1; max += 1; }
+    const binsCount = Math.max(1, Math.min(100, Math.floor(Number(binsInput.value) || 1)));
+    binsInput.value = binsCount;
+    const hFactor = Number(bandwidthInput.value);
+    bandwidthValue.textContent = hFactor.toFixed(2);
+
+    // Histogramme construit à la main. Les bins sont [borneInf, borneSup[,
+    // sauf le dernier qui inclut aussi sa borne supérieure : [borneInf, borneSup].
+    const binWidth = (max - min) / binsCount;
+    const bins = Array.from({ length: binsCount }, (_, i) => ({
+      x0: min + i * binWidth, x1: i === binsCount - 1 ? max : min + (i + 1) * binWidth, count: 0
+    }));
+    values.forEach(v => {
+      let index = v === max ? binsCount - 1 : Math.floor((v - min) / binWidth);
+      index = Math.max(0, Math.min(binsCount - 1, index));
+      bins[index].count += 1;
+    });
+    // Densité (aire totale de l'histogramme ~= 1), afin de comparer à la KDE.
+    bins.forEach(b => b.density = b.count / (values.length * binWidth));
+
+    // Le lissage est relatif à l'étendue de la dimension ; h ne dépend donc pas
+    // des unités propres à l'attribut.
+    const bandwidth = Math.max((max - min) * 0.005, (max - min) * hFactor / 10);
+    const width = Math.max(520, distributionNode.clientWidth || 700);
+    const height = 390;
+    const margin = { top: 18, right: 24, bottom: 60, left: 68 };
+    const x = d3.scaleLinear().domain([min, max]).range([margin.left, width - margin.right]);
+    const maxBar = d3.max(bins, d => d.density) || 1;
+    const samples = [];
+    // Un point tous les 4 pixels environ : le pas est calculé dans l'espace des données.
+    const pixelStep = 4;
+    const sampleCount = Math.max(2, Math.ceil((width - margin.left - margin.right) / pixelStep) + 1);
+    for (let i = 0; i < sampleCount; i++) {
+      const xv = min + (max - min) * i / (sampleCount - 1);
+      const density = d3.mean(values, v => gaussian((xv - v) / bandwidth)) / bandwidth;
+      samples.push({ x: xv, y: density });
+    }
+    const maxY = Math.max(maxBar, d3.max(samples, d => d.y) || 0) * 1.12;
+    const y = d3.scaleLinear().domain([0, maxY || 1]).nice().range([height - margin.bottom, margin.top]);
+    const svg = d3.select(distributionNode).append("svg").attr("viewBox", `0 0 ${width} ${height}`);
+    svg.append("g").attr("class", "gridline").attr("transform", `translate(${margin.left},0)`)
+      .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(""));
+    svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
+      .call(d3.axisBottom(x).ticks(8));
+    svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
+      .call(d3.axisLeft(y).ticks(6));
+    svg.append("text").attr("x", (margin.left + width - margin.right) / 2).attr("y", height - 15)
+      .attr("text-anchor", "middle").attr("fill", "#334155").text(key);
+    svg.append("text").attr("transform", "rotate(-90)").attr("x", -(height - margin.bottom - margin.top) / 2)
+      .attr("y", 19).attr("text-anchor", "middle").attr("fill", "#334155").text("Densité");
+    svg.selectAll(".bar").data(bins).join("rect").attr("class", "bar")
+      .attr("x", d => x(d.x0) + .5).attr("y", d => y(d.density))
+      .attr("width", d => Math.max(0, x(d.x1) - x(d.x0) - 1))
+      .attr("height", d => y(0) - y(d.density))
+      .append("title").text(d => `[${fmt(d.x0)}, ${fmt(d.x1)}${d === bins[bins.length - 1] ? "]" : "["} : ${d.count} valeur(s)`);
+    const densityLine = d3.line().x(d => x(d.x)).y(d => y(d.y)).curve(d3.curveMonotoneX);
+    svg.append("path").datum(samples).attr("class", "density line").attr("d", densityLine);
+    svg.append("text").attr("x", width - margin.right).attr("y", margin.top + 12).attr("text-anchor", "end")
+      .attr("font-size", 11).attr("fill", "#dc2626").text(`Noyau gaussien · h = ${fmt(bandwidth)}`);
+  }
+
+  document.getElementById("clearSelection").addEventListener("click", () => {
+    selected.clear();
+    // Re-dessine les vues pour réinitialiser également les brossages.
+    drawScatterMatrix();
+    drawParallel();
+    renderHighlights();
+  });
+  dimensionSelect.addEventListener("change", drawDistribution);
+  binsInput.addEventListener("change", () => {
+    const v = Math.floor(Number(binsInput.value));
+    binsInput.value = Math.max(1, Math.min(100, Number.isFinite(v) ? v : 15));
+    drawDistribution();
+  });
+  binsInput.addEventListener("input", () => {
+    if (binsInput.value !== "") drawDistribution();
+  });
+  bandwidthInput.addEventListener("input", drawDistribution);
+
+  drawScatterMatrix();
+  drawParallel();
+  drawDistribution();
+  updateStatus();
+
+  // Redimensionnement simple des vues, sans modifier les données ni la sélection.
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      drawScatterMatrix();
+      drawParallel();
+      drawDistribution();
+      renderHighlights();
+    }, 150);
+  });
+})();
+</script>
+</body>
+</html>

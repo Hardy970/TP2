@@ -1,0 +1,10 @@
+historigramme intervalle fermé a la fin fais a la main au lieu dutiliser la fonction de d3 
+
+zone de selection de la dimension nombre de bins que l'utilisateur choisit (entiers)
+
+lisage aussi variable rapport avec la gaussienne 
+
+courbe de régression 3 4 pixels par pas d'echantillonage
+
+
+lien vers le dataset : https://archive.ics.uci.edu/dataset/572/taiwanese+bankruptcy+prediction
