@@ -1,34 +1,546 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
-	<title>Visu</title>
-	<script type="text/javascript" src="data.js"></script>
-	<script type="text/javascript" src="d3.v7.min.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TP D3.js — Visualisation exploratoire</title>
+  <!-- Conserver ces deux fichiers dans le même dossier que ce HTML. -->
+  <script src="data.js"></script>
+  <script src="d3.v7.min.js"></script>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<h1>Participants</h1>
-<ul>
-    <li>ADIMOU Hardy</li>
-    <li>NGUELIEUGA Micky Nathaël</li>
-</ul>
-<div id="container"></div>
+<main>
+  <header>
+    <h1>Visualisation exploratoire de données</h1>
+    <p class="muted">Matrice de scatterplots · Coordonnées parallèles · Histogramme et densité gaussienne</p>
+    <div class="header-meta">
+      <p><strong>Participants :</strong> ADIMOU Hardy · NGUELIEUGA Micky Nathaël</p>
+      <p><strong>Jeu de données :</strong> <a href="https://archive.ics.uci.edu/dataset/572/taiwanese+bankruptcy+prediction" target="_blank" rel="noopener noreferrer">Taiwanese Bankruptcy Prediction — UCI Machine Learning Repository</a></p>
+    </div>
+    <p class="meta" id="datasetInfo"></p>
+    <div class="panel-head">
+      <p class="hint">Test : sélectionnez des individus dans l’une des trois vues. Ils apparaissent en bleu dans les autres vues (Ctrl/⌘/Maj + clic pour une sélection multiple).</p>
+      <button type="button" id="clearSelection">Effacer la sélection</button>
+    </div>
+    <p id="selectionStatus" aria-live="polite">Aucune sélection.</p>
+  </header>
+
+  <section id="errorBox" class="error" hidden></section>
+
+  <section class="panel" aria-labelledby="scatterTitle">
+    <div class="panel-head">
+      <div>
+        <h2 id="scatterTitle">1. Matrice de scatterplots</h2>
+        <p class="hint">Test : cliquez sur un point ou tracez un rectangle dans une case ; cliquez sur un nom de variable pour afficher sa distribution.</p>
+      </div>
+      <p class="hint tip-right">Défilement horizontal possible pour conserver des graphiques lisibles.</p>
+    </div>
+    <div id="scatterMatrix" class="scroll-x"></div>
+    <div class="legend">
+      <span><i class="swatch swatch-neutral"></i>Autres individus</span>
+      <span><i class="swatch swatch-selected"></i>Individus sélectionnés</span>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="parallelTitle">
+    <h2 id="parallelTitle">2. Coordonnées parallèles</h2>
+    <p class="hint">Test : sélectionnez une plage sur un axe vertical ; cliquez sur son libellé pour afficher la distribution correspondante.</p>
+    <div id="parallelCoordinates" class="scroll-x"></div>
+  </section>
+
+  <section class="panel" id="distributionPanel" aria-labelledby="distributionTitle">
+    <h2 id="distributionTitle">3. Histogramme et densité à noyau gaussien</h2>
+    <p class="hint">Test : choisissez une variable, ajustez les deux curseurs, puis sélectionnez un intervalle horizontal pour vérifier la synchronisation.</p>
+    <div class="toolbar">
+      <div class="control">
+        <label for="dimensionSelect">Dimension étudiée</label>
+        <select id="dimensionSelect"></select>
+      </div>
+      <div class="control">
+        <label for="binsRange">Nombre de classes (plus il est grand, plus elles sont étroites)</label>
+        <div class="bin-control">
+          <input id="binsRange" type="range" min="2" max="60" step="1" value="15">
+          <input id="binsInput" type="number" min="2" max="60" step="1" value="15" aria-label="Nombre exact de classes">
+        </div>
+      </div>
+      <div class="control">
+        <label for="bandwidthInput">Lissage gaussien : <span id="bandwidthValue">—</span></label>
+        <input id="bandwidthInput" type="range" min="0.5" max="30" step="0.5" value="6">
+      </div>
+    </div>
+    <div id="distribution" class="scroll-x"></div>
+    <div class="legend">
+      <span><i class="swatch swatch-histogram"></i>Histogramme de tous les individus</span>
+      <span><i class="swatch swatch-selected"></i>Part des individus sélectionnés</span>
+      <span><i class="swatch swatch-density"></i>Densité gaussienne de tous les individus</span>
+    </div>
+  </section>
+</main>
+
 <script>
-	var p = d3.select("#container").selectAll("p")
-		.data(data)
-		.enter()
-		.append("p")
-		.text(function (d) {
-			return d["Cash flow rate"];
-		});
+(() => {
+  "use strict";
+
+  const errorBox = document.getElementById("errorBox");
+  const showError = message => {
+    errorBox.hidden = false;
+    errorBox.textContent = message;
+  };
+  if (typeof d3 === "undefined") {
+    showError("D3.js n'a pas été chargé. Place le fichier d3.v7.min.js dans le même dossier que ce fichier HTML.");
+    return;
+  }
+  if (typeof data === "undefined" || !Array.isArray(data) || data.length === 0) {
+    showError("Le tableau « data » est absent ou vide. Vérifie que data.js définit un tableau nommé data.");
+    return;
+  }
+
+  // Évite notamment de convertir les chaînes vides (ou ne contenant que des espaces) en zéro.
+  const isNumeric = v => v !== null && v !== undefined && typeof v !== "boolean" &&
+    !(typeof v === "string" && v.trim() === "") && Number.isFinite(Number(v));
+  const allKeys = Object.keys(data[0]);
+  const dimensions = allKeys.filter(k => data.some(d => d != null && isNumeric(d[k])));
+  const rows = data.map((original, index) => {
+    const item = { __id: index };
+    for (const key of dimensions) {
+      item[key] = original != null && isNumeric(original[key]) ? Number(original[key]) : NaN;
+    }
+    return item;
+  });
+  if (dimensions.length < 2) {
+    showError("Deux attributs numériques au minimum sont nécessaires. Attributs numériques détectés : " + dimensions.length + ".");
+    return;
+  }
+
+  const selected = new Set();
+  const colors = { neutral: "#767e86", accent: "#1765cb" };
+  const scatterNode = document.getElementById("scatterMatrix");
+  const parallelNode = document.getElementById("parallelCoordinates");
+  const distributionNode = document.getElementById("distribution");
+  const dimensionSelect = document.getElementById("dimensionSelect");
+  const binsRange = document.getElementById("binsRange");
+  const binsInput = document.getElementById("binsInput");
+  const bandwidthInput = document.getElementById("bandwidthInput");
+  const bandwidthValue = document.getElementById("bandwidthValue");
+  const statusNode = document.getElementById("selectionStatus");
+  const fmt = d3.format(".3~g");
+  // Mesurer le texte avec la police du SVG et revenir à la ligne sans supprimer de lettres.
+  // Le dessin reste reproductible d'un navigateur à l'autre grâce à des tailles explicites.
+  const textCanvas = document.createElement("canvas");
+  const textContext = textCanvas.getContext("2d");
+  function splitLines(text, maxWidth, fontSize = 11, fontWeight = 600) {
+    textContext.font = `${fontWeight} ${fontSize}px Arial`;
+    const fits = value => textContext.measureText(value).width <= maxWidth;
+    const lines = [];
+    let current = "";
+    for (const word of String(text).trim().split(/\s+/)) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (fits(candidate)) { current = candidate; continue; }
+      if (current) { lines.push(current); current = ""; }
+      // Les noms sans espaces sont également coupés en lignes, jamais tronqués.
+      let piece = "";
+      for (const char of word) {
+        if (piece && !fits(piece + char)) { lines.push(piece); piece = ""; }
+        piece += char;
+      }
+      current = piece;
+    }
+    if (current) lines.push(current);
+    return lines.length ? lines : [""];
+  }
+  function appendWrappedLabel(parent, key, x, centerY, maxWidth, options = {}) {
+    const fontSize = options.fontSize || 11;
+    const lineHeight = fontSize * 1.22;
+    const lines = splitLines(key, maxWidth, fontSize, 600);
+    const text = parent.append("text")
+      .attr("class", options.className || "matrix-label")
+      .attr("x", x)
+      .attr("y", centerY - (lines.length - 1) * lineHeight / 2)
+      .attr("text-anchor", options.anchor || "middle")
+      .attr("font-size", fontSize);
+    lines.forEach((line, i) => text.append("tspan")
+      .attr("x", x).attr("dy", i ? lineHeight : 0).text(line));
+    if (options.onClick) text.on("click", () => options.onClick(key));
+    text.append("title").text(`${key} — afficher sa distribution`);
+    return text;
+  }
+  const validRows = key => rows.filter(d => Number.isFinite(d[key]));
+
+  for (const k of dimensions) dimensionSelect.add(new Option(k, k));
+  document.getElementById("datasetInfo").textContent =
+    `${rows.length} individus · ${allKeys.length} attributs dans les données · ${dimensions.length} attributs numériques visualisés` +
+    (allKeys.length < 15 ? " · Attention : l'énoncé demande au moins une quinzaine d'attributs." : "");
+
+  // Une seule zone de brossage active à la fois, quelle que soit la vue.
+  let brushRefs = [];
+  let distributionState = null;
+  function clearOtherBrushes(except = null) {
+    for (const ref of brushRefs) {
+      // Ne pas déclencher des centaines d’événements si aucune zone n’est active.
+      if (ref.node !== except && d3.brushSelection(ref.node) !== null) {
+        d3.select(ref.node).call(ref.brush.move, null);
+      }
+    }
+  }
+  function replaceSelection(ids, exceptBrush = null) {
+    clearOtherBrushes(exceptBrush);
+    selected.clear();
+    for (const id of ids) selected.add(id);
+    refreshHighlights();
+  }
+  function toggleSelection(id) {
+    clearOtherBrushes();
+    if (selected.has(id)) selected.delete(id);
+    else selected.add(id);
+    refreshHighlights();
+  }
+  function updateStatus() {
+    statusNode.textContent = selected.size
+      ? `${selected.size} individu${selected.size > 1 ? "s" : ""} sélectionné${selected.size > 1 ? "s" : ""} sur ${rows.length}.`
+      : "Aucune sélection : tous les individus sont affichés en gris.";
+  }
+  function refreshHighlights() {
+    const hasSelection = selected.size > 0;
+    d3.select(scatterNode).selectAll(".point")
+      .attr("fill", d => selected.has(d.__id) ? colors.accent : colors.neutral)
+      .attr("opacity", d => selected.has(d.__id) ? 1 : (hasSelection ? .11 : .53))
+      .attr("r", d => selected.has(d.__id) ? 3.6 : (dimensions.length >= 12 ? 2.15 : 2.8))
+      .attr("stroke", d => selected.has(d.__id) ? "white" : "none")
+      .attr("stroke-width", d => selected.has(d.__id) ? .7 : 0);
+    d3.select(parallelNode).selectAll(".individual")
+      .attr("stroke", d => selected.has(d.__id) ? colors.accent : colors.neutral)
+      .attr("opacity", d => selected.has(d.__id) ? .96 : (hasSelection ? .055 : .24))
+      .attr("stroke-width", d => selected.has(d.__id) ? 2.1 : .95)
+      .sort((a, b) => Number(selected.has(a.__id)) - Number(selected.has(b.__id)));
+
+    // L'histogramme total reste gris. La partie correspondant aux individus
+    // sélectionnés est superposée en bleu, avec la MÊME normalisation.
+    if (distributionState) {
+      const { key, bins, binWidth, minimum, maximum, total, x, y } = distributionState;
+      for (const bin of bins) bin.selectedCount = 0;
+      for (const d of rows) {
+        if (!selected.has(d.__id) || !Number.isFinite(d[key])) continue;
+        const value = d[key];
+        let index = value === maximum ? bins.length - 1 : Math.floor((value - minimum) / binWidth);
+        index = Math.max(0, Math.min(bins.length - 1, index));
+        bins[index].selectedCount++;
+      }
+      d3.select(distributionNode).selectAll(".selected-bar")
+        .attr("x", d => x(d.x0) + .5)
+        .attr("width", d => Math.max(0, x(d.x1) - x(d.x0) - 1))
+        .attr("y", d => y(d.selectedCount / (total * binWidth)))
+        .attr("height", d => y(0) - y(d.selectedCount / (total * binWidth)))
+        .attr("opacity", hasSelection ? 1 : 0);
+    }
+    updateStatus();
+  }
+
+  function displayDimension(key) {
+    dimensionSelect.value = key;
+    drawDistribution();
+    document.getElementById("distributionPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function drawScatterMatrix() {
+    scatterNode.innerHTML = "";
+    const n = dimensions.length;
+    const viewportWidth = scatterNode.clientWidth || 1100;
+    const baseCell = Math.max(172, Math.min(220, Math.floor((viewportWidth - 300) / n)));
+    const rowLineCount = Math.max(...dimensions.map(k => splitLines(k, 223).length));
+    const cell = Math.max(baseCell, Math.ceil(rowLineCount * 13.5 + 24));
+    const topLineCount = Math.max(...dimensions.map(k => splitLines(k, cell - 24).length));
+    // Marges calculées : pas de texte coupé, même si les noms sont longs.
+    const margin = { top: Math.max(78, Math.ceil(topLineCount * 13.5 + 23)), right: 28, bottom: 27, left: 265 };
+    const width = margin.left + n * cell + margin.right;
+    const height = margin.top + n * cell + margin.bottom;
+    const svg = d3.select(scatterNode).append("svg")
+      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("width", width).attr("height", height)
+      .style("width", `${width}px`)
+      .style("height", `${height}px`)
+      .attr("role", "img").attr("aria-label", "Matrice de comparaison de toutes les dimensions deux à deux");
+
+    const extents = {};
+    for (const key of dimensions) {
+      let extent = d3.extent(validRows(key), d => d[key]);
+      if (extent[0] === extent[1]) extent = [extent[0] - 1, extent[1] + 1];
+      extents[key] = extent;
+    }
+    const inner = { left: 30, right: cell - 12, top: 11, bottom: cell - 28 };
+
+    dimensions.forEach((key, index) => {
+      appendWrappedLabel(svg, key, margin.left + index * cell + cell / 2, margin.top / 2, cell - 24,
+        { className: "matrix-heading matrix-label matrix-dimension", onClick: displayDimension });
+      appendWrappedLabel(svg, key, margin.left - 27, margin.top + index * cell + cell / 2, margin.left - 42,
+        { className: "matrix-row-label matrix-label matrix-dimension", anchor: "end", onClick: displayDimension });
+    });
+
+    dimensions.forEach((yKey, r) => dimensions.forEach((xKey, c) => {
+      const g = svg.append("g")
+        .attr("transform", `translate(${margin.left + c * cell},${margin.top + r * cell})`);
+      g.append("rect").attr("x", 4).attr("y", 4)
+        .attr("width", cell - 8).attr("height", cell - 8)
+        .attr("fill", r === c ? "#f5f6f7" : "#fff")
+        .attr("stroke", "#e3e7ea");
+
+      if (r === c) {
+        appendWrappedLabel(g, xKey, cell / 2, cell / 2, cell - 24,
+          { className: "matrix-label matrix-dimension", fontSize: 11, onClick: displayDimension });
+        return;
+      }
+
+      const x = d3.scaleLinear().domain(extents[xKey]).nice().range([inner.left, inner.right]);
+      const y = d3.scaleLinear().domain(extents[yKey]).nice().range([inner.bottom, inner.top]);
+      // Sélection rectangulaire : les deux coordonnées doivent être dans la zone.
+      const brush = d3.brush()
+        .extent([[inner.left, inner.top], [inner.right, inner.bottom]])
+        .on("end", function(event) {
+          if (!event.sourceEvent) return; // Ignorer les effacements programmatiques.
+          if (!event.selection) {
+            replaceSelection([], this);
+            return;
+          }
+          const [[x0, y0], [x1, y1]] = event.selection;
+          const ids = rows.filter(d => Number.isFinite(d[xKey]) && Number.isFinite(d[yKey]) &&
+            x(d[xKey]) >= x0 && x(d[xKey]) <= x1 &&
+            y(d[yKey]) >= y0 && y(d[yKey]) <= y1).map(d => d.__id);
+          replaceSelection(ids, this);
+        });
+      // Placer le brush avant les points conserve les clics sur les points.
+      const brushGroup = g.append("g").attr("class", "brush").call(brush);
+      brushRefs.push({ node: brushGroup.node(), brush });
+
+      g.selectAll(".point")
+        .data(rows.filter(d => Number.isFinite(d[xKey]) && Number.isFinite(d[yKey])))
+        .join("circle").attr("class", "point")
+        .attr("cx", d => x(d[xKey])).attr("cy", d => y(d[yKey]))
+        .on("click", (event, d) => {
+          event.stopPropagation();
+          if (event.ctrlKey || event.metaKey || event.shiftKey) toggleSelection(d.__id);
+          else replaceSelection([d.__id]);
+        })
+        .append("title")
+        .text(d => `Individu n° ${d.__id + 1}\n${xKey} : ${fmt(d[xKey])}\n${yKey} : ${fmt(d[yKey])}`);
+
+      // Graduations seulement sur le bord inférieur/gauche : lecture sans surcharge.
+      if (r === n - 1) {
+        g.append("g").attr("class", "axis")
+          .attr("transform", `translate(0,${inner.bottom})`)
+          .call(d3.axisBottom(x).ticks(3).tickSize(3).tickFormat(d3.format("~g")));
+      }
+      if (c === 0) {
+        g.append("g").attr("class", "axis")
+          .attr("transform", `translate(${inner.left},0)`)
+          .call(d3.axisLeft(y).ticks(3).tickSize(3).tickFormat(d3.format("~g")));
+      }
+    }));
+  }
+
+  function drawParallel() {
+    parallelNode.innerHTML = "";
+    // Espacer les axes : leurs libellés, même longs, tiennent sur plusieurs lignes.
+    const axisGap = 205;
+    const axisLabelLines = Math.max(...dimensions.map(k => splitLines(k, 188).length));
+    const margin = { top: Math.max(112, Math.ceil(axisLabelLines * 13.5 + 36)), right: 133, bottom: 42, left: 133 };
+    const width = Math.max(parallelNode.clientWidth || 1100, (dimensions.length - 1) * axisGap + margin.left + margin.right);
+    const height = margin.top + 426 + margin.bottom;
+    const x = d3.scalePoint().domain(dimensions).range([margin.left, width - margin.right]);
+    const y = {};
+    for (const key of dimensions) {
+      let extent = d3.extent(validRows(key), d => d[key]);
+      if (extent[0] === extent[1]) extent = [extent[0] - 1, extent[1] + 1];
+      y[key] = d3.scaleLinear().domain(extent).nice().range([height - margin.bottom, margin.top]);
+    }
+    const line = d3.line()
+      .defined(([key, value]) => Number.isFinite(value))
+      .x(([key]) => x(key)).y(([key, value]) => y[key](value));
+    const svg = d3.select(parallelNode).append("svg")
+      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("width", width).attr("height", height)
+      .style("width", `${width}px`)
+      .style("height", `${height}px`)
+      .attr("role", "img").attr("aria-label", "Visualisation en coordonnées parallèles");
+
+    const lines = svg.append("g");
+    lines.selectAll("path").data(rows).join("path")
+      .attr("class", "individual line")
+      .attr("d", d => line(dimensions.map(key => [key, d[key]])))
+      .on("click", (event, d) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey) toggleSelection(d.__id);
+        else replaceSelection([d.__id]);
+      })
+      .append("title").text(d => `Individu n° ${d.__id + 1}`);
+
+    const axes = svg.selectAll(".dimension-axis").data(dimensions).join("g")
+      .attr("class", "dimension-axis")
+      .attr("transform", key => `translate(${x(key)},0)`);
+    axes.append("g").attr("class", "axis")
+      .each(function(key) { d3.select(this).call(d3.axisLeft(y[key]).ticks(6).tickFormat(d3.format("~g"))); });
+    axes.each(function(key) {
+      appendWrappedLabel(d3.select(this), key, 0, margin.top / 2 - 6, 188,
+        { className: "dimension-label", fontSize: 11, onClick: displayDimension });
+    });
+    axes.each(function(key) {
+      const brush = d3.brushY()
+        .extent([[-12, margin.top], [12, height - margin.bottom]])
+        .on("end", function(event) {
+          if (!event.sourceEvent) return;
+          if (!event.selection) {
+            replaceSelection([], this);
+            return;
+          }
+          const [v0, v1] = event.selection.map(y[key].invert).sort((a, b) => a - b);
+          replaceSelection(rows.filter(d => Number.isFinite(d[key]) && d[key] >= v0 && d[key] <= v1)
+            .map(d => d.__id), this);
+        });
+      const brushGroup = d3.select(this).append("g").attr("class", "brush").call(brush);
+      brushRefs.push({ node: brushGroup.node(), brush });
+    });
+  }
+
+  function gaussian(u) { return Math.exp(-u * u / 2) / Math.sqrt(2 * Math.PI); }
+
+  function drawDistribution() {
+    distributionNode.innerHTML = "";
+    // Retirer les anciennes zones de brossage détruites avec le SVG précédent.
+    brushRefs = brushRefs.filter(ref => ref.node.isConnected);
+    distributionState = null;
+    const key = dimensionSelect.value;
+    const values = validRows(key).map(d => d[key]);
+    if (!values.length) {
+      distributionNode.textContent = "Aucune valeur numérique pour cette dimension.";
+      return;
+    }
+    let [minimum, maximum] = d3.extent(values);
+    if (minimum === maximum) { minimum -= 1; maximum += 1; }
+    const count = Math.max(2, Math.min(60, Math.floor(Number(binsInput.value) || 15)));
+    binsInput.value = count;
+    binsRange.value = count;
+    const binWidth = (maximum - minimum) / count;
+
+    // Histogramme manuel : [a,b[ pour les classes ordinaires, [a,b] pour la dernière.
+    const bins = Array.from({ length: count }, (_, i) => ({
+      x0: minimum + i * binWidth,
+      x1: i === count - 1 ? maximum : minimum + (i + 1) * binWidth,
+      count: 0,
+      selectedCount: 0
+    }));
+    for (const value of values) {
+      let index = value === maximum ? count - 1 : Math.floor((value - minimum) / binWidth);
+      index = Math.max(0, Math.min(count - 1, index));
+      bins[index].count++;
+    }
+    // En divisant par N * largeur, l'aire totale de l'histogramme vaut 1.
+    for (const bin of bins) bin.density = bin.count / (values.length * binWidth);
+
+    // Slider en % de l'étendue ; valeur h effective exprimée dans l'unité de l'attribut.
+    const hPercent = Number(bandwidthInput.value);
+    const bandwidth = (maximum - minimum) * hPercent / 100;
+    bandwidthValue.textContent = `${fmt(bandwidth)} (soit ${hPercent} % de l'étendue)`;
+
+    const width = Math.max(760, distributionNode.clientWidth || 900);
+    const height = 470;
+    const margin = { top: 18, right: 29, bottom: 65, left: 77 };
+    const x = d3.scaleLinear().domain([minimum, maximum]).range([margin.left, width - margin.right]);
+    const pixelStep = 4; // Un échantillon tous les ~4 pixels pour la KDE.
+    const sampleCount = Math.max(2, Math.ceil((width - margin.left - margin.right) / pixelStep) + 1);
+    const samples = [];
+    for (let i = 0; i < sampleCount; i++) {
+      const xv = minimum + (maximum - minimum) * i / (sampleCount - 1);
+      const kde = d3.mean(values, v => gaussian((xv - v) / bandwidth)) / bandwidth;
+      samples.push({ x: xv, y: kde });
+    }
+    const maxBar = d3.max(bins, d => d.density) || 0;
+    const maxKde = d3.max(samples, d => d.y) || 0;
+    const y = d3.scaleLinear().domain([0, Math.max(maxBar, maxKde) * 1.12 || 1])
+      .nice().range([height - margin.bottom, margin.top]);
+    const svg = d3.select(distributionNode).append("svg")
+      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("width", width).attr("height", height)
+      .style("width", `${width}px`)
+      .style("height", `${height}px`)
+      .attr("role", "img")
+      .attr("aria-label", `Histogramme et densité gaussienne de ${key}`);
+
+    svg.append("g").attr("class", "gridline").attr("transform", `translate(${margin.left},0)`)
+      .call(d3.axisLeft(y).ticks(6).tickSize(-(width - margin.left - margin.right)).tickFormat(""));
+    svg.append("g").attr("class", "axis").attr("transform", `translate(0,${height - margin.bottom})`)
+      .call(d3.axisBottom(x).ticks(Math.max(4, Math.floor(width / 120))));
+    svg.append("g").attr("class", "axis").attr("transform", `translate(${margin.left},0)`)
+      .call(d3.axisLeft(y).ticks(6));
+    svg.append("text").attr("x", (margin.left + width - margin.right) / 2).attr("y", height - 19)
+      .attr("text-anchor", "middle").attr("fill", "#39434d").text(key);
+    svg.append("text").attr("transform", "rotate(-90)")
+      .attr("x", -(height - margin.bottom + margin.top) / 2).attr("y", 21)
+      .attr("text-anchor", "middle").attr("fill", "#39434d").text("Densité");
+
+    svg.selectAll(".hist-bar").data(bins).join("rect").attr("class", "hist-bar")
+      .attr("x", d => x(d.x0) + .5)
+      .attr("y", d => y(d.density))
+      .attr("width", d => Math.max(0, x(d.x1) - x(d.x0) - 1))
+      .attr("height", d => y(0) - y(d.density));
+    svg.selectAll(".selected-bar").data(bins).join("rect").attr("class", "selected-bar");
+
+    svg.append("path").datum(samples)
+      .attr("class", "density-line line")
+      .attr("d", d3.line().x(d => x(d.x)).y(d => y(d.y)).curve(d3.curveMonotoneX));
+
+    // Brossage horizontal pour sélectionner des individus par valeurs de cet attribut.
+    const brush = d3.brushX()
+      .extent([[margin.left, margin.top], [width - margin.right, height - margin.bottom]])
+      .on("end", function(event) {
+        if (!event.sourceEvent) return;
+        if (!event.selection) {
+          replaceSelection([], this);
+          return;
+        }
+        const [minX, maxX] = event.selection.map(x.invert);
+        replaceSelection(rows.filter(d => Number.isFinite(d[key]) && d[key] >= minX && d[key] <= maxX)
+          .map(d => d.__id), this);
+      });
+    const brushGroup = svg.append("g").attr("class", "brush").call(brush);
+    brushRefs.push({ node: brushGroup.node(), brush });
+
+    distributionState = { key, bins, binWidth, minimum, maximum, total: values.length, x, y };
+    refreshHighlights();
+  }
+
+  function clearSelection() { replaceSelection([]); }
+  document.getElementById("clearSelection").addEventListener("click", clearSelection);
+  dimensionSelect.addEventListener("change", drawDistribution);
+  binsRange.addEventListener("input", () => {
+    binsInput.value = binsRange.value;
+    drawDistribution();
+  });
+  binsInput.addEventListener("input", () => {
+    if (binsInput.value === "") return;
+    if (!Number.isFinite(Number(binsInput.value))) return;
+    const value = Math.max(2, Math.min(60, Math.floor(Number(binsInput.value))));
+    binsRange.value = value;
+    if (Number(binsInput.value) >= 2 && Number(binsInput.value) <= 60) drawDistribution();
+  });
+  binsInput.addEventListener("change", () => {
+    binsInput.value = Math.max(2, Math.min(60, Math.floor(Number(binsInput.value)) || 15));
+    binsRange.value = binsInput.value;
+    drawDistribution();
+  });
+  bandwidthInput.addEventListener("input", drawDistribution);
+
+  function renderAll() {
+    brushRefs = []; // Les anciennes zones de brossage ne sont plus dans le DOM.
+    drawScatterMatrix();
+    drawParallel();
+    drawDistribution();
+    refreshHighlights();
+  }
+  renderAll();
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderAll, 180);
+  });
+})();
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-

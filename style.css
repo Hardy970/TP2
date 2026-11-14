@@ -1,0 +1,81 @@
+:root {
+  font-family: Arial, Helvetica, sans-serif;
+  color: #27313b;
+  background: #f6f7f8;
+  --border: #d7dde2;
+  --muted: #606b75;
+  --gray: #767e86;
+  --light-gray: #c4c9ce;
+  --accent: #1765cb; /* Une seule couleur vive : les individus sélectionnés. */
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 20px 24px 38px; }
+main { max-width: 1750px; margin: 0 auto; }
+h1 { margin: 0 0 6px; font-size: 1.8rem; }
+h2 { margin: 0 0 7px; font-size: 1.16rem; }
+p { margin: 7px 0; }
+.muted, .hint { color: var(--muted); }
+.hint { font-size: .88rem; line-height: 1.5; }
+header { margin-bottom: 18px; }
+.panel {
+  margin: 0 0 18px;
+  padding: 20px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.scroll-x { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 5px 0 14px; }
+.scroll-x svg { display: block; flex-shrink: 0; max-width: none; }
+#distribution svg { display: block; max-width: none; }
+.axis path, .axis line { stroke: #aeb6bd; }
+.axis text { fill: #535d66; font-size: 10px; }
+.gridline line { stroke: #e9ecef; }
+.gridline path { stroke: none; }
+.matrix-heading, .matrix-row-label { fill: #39434d; font-size: 11px; font-weight: 550; }
+.dimension-label, .matrix-dimension { cursor: pointer; }
+.dimension-label:hover, .matrix-dimension:hover { text-decoration: underline; }
+.point { cursor: pointer; }
+.line { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.brush .selection { fill: #616b75; fill-opacity: .12; stroke: #505a64; stroke-width: 1; }
+.brush .overlay { cursor: crosshair; }
+.hist-bar { fill: var(--light-gray); }
+.selected-bar { fill: var(--accent); pointer-events: none; }
+.density-line { fill: none; stroke: #313b45; stroke-width: 2.5; pointer-events: none; }
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 22px; margin-top: 9px; font-size: .86rem; color: #4f5a64; }
+.swatch { width: 11px; height: 11px; display: inline-block; vertical-align: -1px; margin-right: 6px; border-radius: 2px; }
+.swatch-neutral { background: #767e86; }
+.swatch-selected { background: #1765cb; }
+.swatch-histogram { background: #c4c9ce; }
+.swatch-density { background: #313b45; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 15px 25px; margin: 16px 0 10px; }
+.control { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 200px; }
+label { font-size: .88rem; font-weight: 600; }
+select, input[type="number"], button { font: inherit; padding: 8px 10px; color: inherit; background: white; border: 1px solid #bac2ca; border-radius: 6px; }
+select { width: min(100%, 300px); max-width: 300px; }
+input[type="range"] { width: 230px; margin: 6px 0; accent-color: #606b75; }
+input[type="number"] { width: 66px; }
+button { cursor: pointer; }
+button:hover { background: #f1f3f5; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #58636f; outline-offset: 2px; }
+.bin-control { display: flex; align-items: center; gap: 10px; }
+#selectionStatus { font-size: .92rem; font-weight: 600; }
+.meta { font-size: .88rem; color: var(--muted); }
+.error { margin-bottom: 18px; padding: 14px; border: 1px solid #aaadb1; background: white; border-radius: 7px; }
+.tip-right { max-width: 480px; }
+.header-meta { margin: 8px 0 12px; }
+.header-meta p { margin: 4px 0; }
+a { color: #303b45; text-decoration: underline; text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid #58636f; outline-offset: 3px; }
+@media (max-width: 660px) {
+  body { padding: 12px; }
+  .toolbar { gap: 14px; }
+  .control { min-width: 100%; }
+  input[type="range"] { width: min(65vw, 260px); }
+}
+/* Mise en page identique dans les navigateurs courants ; les SVG gardent leur taille en pixels. */
+.panel, .panel-head, .toolbar, .control { min-width: 0; }
+.matrix-label, .dimension-label { font-family: Arial, Helvetica, sans-serif; }
+.matrix-label { fill: #39434d; font-weight: 600; }
+.dimension-label { fill: #39434d; font-weight: 600; }
+svg text { font-family: Arial, Helvetica, sans-serif; }
