@@ -20,7 +20,7 @@
     </div>
     <p class="meta" id="datasetInfo"></p>
     <div class="panel-head">
-      <p class="hint">Test : sélectionnez des individus dans l’une des trois vues. Ils apparaissent en bleu dans les autres vues (Ctrl/⌘/Maj + clic pour une sélection multiple).</p>
+      <p class="hint">Cliquez sur un point pour sélectionner un individu. Maintenez Ctrl (ou ⌘ sur Mac) et cliquez sur d’autres points pour compléter la sélection. Les individus sélectionnés sont mis en évidence dans les trois graphiques.</p>
       <button type="button" id="clearSelection">Effacer la sélection</button>
     </div>
     <p id="selectionStatus" aria-live="polite">Aucune sélection.</p>
@@ -32,26 +32,28 @@
     <div class="panel-head">
       <div>
         <h2 id="scatterTitle">1. Matrice de scatterplots</h2>
-        <p class="hint">Test : cliquez sur un point ou tracez un rectangle dans une case ; cliquez sur un nom de variable pour afficher sa distribution.</p>
+        <p class="hint">Chaque case compare deux variables avec ses propres graduations. Cliquez sur un point ou faites glisser un rectangle pour sélectionner des individus.</p>
       </div>
-      <p class="hint tip-right">Défilement horizontal possible pour conserver des graphiques lisibles.</p>
+      <p class="hint tip-right">Faites défiler horizontalement pour parcourir les variables ; toutes restent affichées.</p>
     </div>
-    <div id="scatterMatrix" class="scroll-x"></div>
+    <div id="matrixContext" class="matrix-context" aria-live="off">Survolez une case pour afficher les deux variables comparées.</div>
+    <div id="matrixTopScroll" class="matrix-top-scroll" aria-label="Défilement horizontal de la matrice"><div id="matrixTopScrollWidth"></div></div>
+    <div id="scatterMatrix" class="scroll-x matrix-scroll"></div>
     <div class="legend">
-      <span><i class="swatch swatch-neutral"></i>Autres individus</span>
+      <span><i class="swatch swatch-neutral"></i>Ensemble des individus (reste visible après sélection)</span>
       <span><i class="swatch swatch-selected"></i>Individus sélectionnés</span>
     </div>
   </section>
 
   <section class="panel" aria-labelledby="parallelTitle">
     <h2 id="parallelTitle">2. Coordonnées parallèles</h2>
-    <p class="hint">Test : sélectionnez une plage sur un axe vertical ; cliquez sur son libellé pour afficher la distribution correspondante.</p>
+    <p class="hint">Faites glisser le curseur sur un axe vertical pour choisir une plage de valeurs. Cliquez sur un libellé pour afficher la distribution de cette variable.</p>
     <div id="parallelCoordinates" class="scroll-x"></div>
   </section>
 
   <section class="panel" id="distributionPanel" aria-labelledby="distributionTitle">
     <h2 id="distributionTitle">3. Histogramme et densité à noyau gaussien</h2>
-    <p class="hint">Test : choisissez une variable, ajustez les deux curseurs, puis sélectionnez un intervalle horizontal pour vérifier la synchronisation.</p>
+    <p class="hint">Choisissez une variable et ajustez les curseurs. Faites glisser sur le graphique pour sélectionner une plage de valeurs.</p>
     <div class="toolbar">
       <div class="control">
         <label for="dimensionSelect">Dimension étudiée</label>
@@ -169,8 +171,7 @@
 
   for (const k of dimensions) dimensionSelect.add(new Option(k, k));
   document.getElementById("datasetInfo").textContent =
-    `${rows.length} individus · ${allKeys.length} attributs dans les données · ${dimensions.length} attributs numériques visualisés` +
-    (allKeys.length < 15 ? " · Attention : l'énoncé demande au moins une quinzaine d'attributs." : "");
+    `${rows.length.toLocaleString("fr-FR")} individus · ${dimensions.length} variables numériques`;
 
   // Une seule zone de brossage active à la fois, quelle que soit la vue.
   let brushRefs = [];
@@ -198,19 +199,15 @@
   function updateStatus() {
     statusNode.textContent = selected.size
       ? `${selected.size} individu${selected.size > 1 ? "s" : ""} sélectionné${selected.size > 1 ? "s" : ""} sur ${rows.length}.`
-      : "Aucune sélection : tous les individus sont affichés en gris.";
+      : "Aucun individu sélectionné.";
   }
+  let scatterState = null;
   function refreshHighlights() {
     const hasSelection = selected.size > 0;
-    d3.select(scatterNode).selectAll(".point")
-      .attr("fill", d => selected.has(d.__id) ? colors.accent : colors.neutral)
-      .attr("opacity", d => selected.has(d.__id) ? 1 : (hasSelection ? .11 : .53))
-      .attr("r", d => selected.has(d.__id) ? 3.6 : (dimensions.length >= 12 ? 2.15 : 2.8))
-      .attr("stroke", d => selected.has(d.__id) ? "white" : "none")
-      .attr("stroke-width", d => selected.has(d.__id) ? .7 : 0);
+    drawScatterHighlights(); // Base grise permanente, sélection bleue sur une couche distincte.
     d3.select(parallelNode).selectAll(".individual")
       .attr("stroke", d => selected.has(d.__id) ? colors.accent : colors.neutral)
-      .attr("opacity", d => selected.has(d.__id) ? .96 : (hasSelection ? .055 : .24))
+      .attr("opacity", d => selected.has(d.__id) ? .95 : .31)
       .attr("stroke-width", d => selected.has(d.__id) ? 2.1 : .95)
       .sort((a, b) => Number(selected.has(a.__id)) - Number(selected.has(b.__id)));
 
@@ -242,24 +239,71 @@
     document.getElementById("distributionPanel").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Les points sont peints sur un canvas pour ne pas créer des centaines de milliers
+  // de cercles SVG avec les matrices contenant de nombreuses variables.
+  // Une couche distincte affiche les individus sélectionnés sans estomper les autres.
+  function drawScatterHighlights() {
+    if (!scatterState) return;
+    const { highlightedCanvas, highlightedCtx, cells, dpr } = scatterState;
+    const ctx = highlightedCtx;
+    ctx.clearRect(0, 0, highlightedCanvas.width / dpr, highlightedCanvas.height / dpr);
+    if (!selected.size) return;
+    ctx.fillStyle = colors.accent;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = .65;
+    const selectedRows = [...selected].map(id => rows[id]).filter(Boolean);
+    for (const cell of cells) {
+      if (cell.diagonal) continue;
+      const { xKey, yKey, x, y, ox, oy } = cell;
+      for (const row of selectedRows) {
+        if (!Number.isFinite(row[xKey]) || !Number.isFinite(row[yKey])) continue;
+        const px = ox + x(row[xKey]);
+        const py = oy + y(row[yKey]);
+        ctx.beginPath();
+        ctx.arc(px, py, 3.5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+  }
+
   function drawScatterMatrix() {
     scatterNode.innerHTML = "";
+    scatterState = null;
     const n = dimensions.length;
-    const viewportWidth = scatterNode.clientWidth || 1100;
-    const baseCell = Math.max(172, Math.min(220, Math.floor((viewportWidth - 300) / n)));
-    const rowLineCount = Math.max(...dimensions.map(k => splitLines(k, 223).length));
-    const cell = Math.max(baseCell, Math.ceil(rowLineCount * 13.5 + 24));
-    const topLineCount = Math.max(...dimensions.map(k => splitLines(k, cell - 24).length));
-    // Marges calculées : pas de texte coupé, même si les noms sont longs.
-    const margin = { top: Math.max(78, Math.ceil(topLineCount * 13.5 + 23)), right: 28, bottom: 27, left: 265 };
+    const viewportWidth = scatterNode.clientWidth || 1024;
+    // Taille stable en pixels : la matrice n'est plus réduite pour tenir dans la fenêtre.
+    const cell = n <= 5 ? 196 : n <= 12 ? 178 : 164;
+    const rowLineCount = Math.max(...dimensions.map(k => splitLines(k, 222).length));
+    const columnLineCount = Math.max(...dimensions.map(k => splitLines(k, cell - 22).length));
+    const margin = {
+      top: Math.max(78, columnLineCount * 14 + 26),
+      right: 24, bottom: 16,
+      left: Math.max(245, Math.min(320, rowLineCount * 3 + 245))
+    };
     const width = margin.left + n * cell + margin.right;
     const height = margin.top + n * cell + margin.bottom;
-    const svg = d3.select(scatterNode).append("svg")
+    // Évite de dépasser les limites des canvases pour de très grands jeux de données.
+    // Le DPR reste à 1 sur les grandes matrices, ce qui limite aussi la mémoire.
+    const dpr = width * height > 5e6 ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
+    const stage = d3.select(scatterNode).append("div")
+      .attr("class", "matrix-stage")
+      .style("width", `${width}px`).style("height", `${height}px`);
+    function addCanvas(className) {
+      const canvas = stage.append("canvas").attr("class", className)
+        .attr("width", Math.round(width * dpr)).attr("height", Math.round(height * dpr))
+        .style("width", `${width}px`).style("height", `${height}px`).node();
+      const ctx = canvas.getContext("2d", { alpha: true });
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return { canvas, ctx };
+    }
+    const base = addCanvas("matrix-canvas matrix-base");
+    const highlight = addCanvas("matrix-canvas matrix-highlight");
+    const svg = stage.append("svg").attr("class", "matrix-svg")
       .attr("viewBox", `0 0 ${width} ${height}`)
       .attr("width", width).attr("height", height)
-      .style("width", `${width}px`)
-      .style("height", `${height}px`)
-      .attr("role", "img").attr("aria-label", "Matrice de comparaison de toutes les dimensions deux à deux");
+      .attr("role", "img")
+      .attr("aria-label", "Matrice des scatterplots de toutes les variables avec graduations dans chaque case");
 
     const extents = {};
     for (const key of dimensions) {
@@ -267,82 +311,109 @@
       if (extent[0] === extent[1]) extent = [extent[0] - 1, extent[1] + 1];
       extents[key] = extent;
     }
-    const inner = { left: 30, right: cell - 12, top: 11, bottom: cell - 28 };
+    const inner = { left: 45, right: cell - 12, top: 12, bottom: cell - 32 };
+    const cells = [];
+    const contextNode = document.getElementById("matrixContext");
+    const defaultContext = "Survolez une case pour afficher les deux variables comparées.";
 
     dimensions.forEach((key, index) => {
-      appendWrappedLabel(svg, key, margin.left + index * cell + cell / 2, margin.top / 2, cell - 24,
-        { className: "matrix-heading matrix-label matrix-dimension", onClick: displayDimension });
-      appendWrappedLabel(svg, key, margin.left - 27, margin.top + index * cell + cell / 2, margin.left - 42,
-        { className: "matrix-row-label matrix-label matrix-dimension", anchor: "end", onClick: displayDimension });
+      appendWrappedLabel(svg, key, margin.left + index * cell + cell / 2, margin.top / 2,
+        cell - 20, { className: "matrix-heading matrix-label matrix-dimension", onClick: displayDimension });
+      appendWrappedLabel(svg, key, margin.left - 15, margin.top + index * cell + cell / 2,
+        margin.left - 26, { className: "matrix-row-label matrix-label matrix-dimension",
+          anchor: "end", onClick: displayDimension });
     });
 
-    dimensions.forEach((yKey, r) => dimensions.forEach((xKey, c) => {
-      const g = svg.append("g")
-        .attr("transform", `translate(${margin.left + c * cell},${margin.top + r * cell})`);
-      g.append("rect").attr("x", 4).attr("y", 4)
-        .attr("width", cell - 8).attr("height", cell - 8)
-        .attr("fill", r === c ? "#f5f6f7" : "#fff")
-        .attr("stroke", "#e3e7ea");
-
-      if (r === c) {
-        appendWrappedLabel(g, xKey, cell / 2, cell / 2, cell - 24,
-          { className: "matrix-label matrix-dimension", fontSize: 11, onClick: displayDimension });
-        return;
-      }
-
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+      const yKey = dimensions[r], xKey = dimensions[c];
+      const ox = margin.left + c * cell, oy = margin.top + r * cell;
+      const g = svg.append("g").attr("transform", `translate(${ox},${oy})`);
+      const diagonal = r === c;
+      g.append("rect").attr("class", "matrix-cell")
+        .attr("x", .5).attr("y", .5).attr("width", cell - 1).attr("height", cell - 1)
+        .attr("fill", diagonal ? "#f5f6f7" : "none");
       const x = d3.scaleLinear().domain(extents[xKey]).nice().range([inner.left, inner.right]);
       const y = d3.scaleLinear().domain(extents[yKey]).nice().range([inner.bottom, inner.top]);
-      // Sélection rectangulaire : les deux coordonnées doivent être dans la zone.
-      const brush = d3.brush()
-        .extent([[inner.left, inner.top], [inner.right, inner.bottom]])
-        .on("end", function(event) {
-          if (!event.sourceEvent) return; // Ignorer les effacements programmatiques.
-          if (!event.selection) {
-            replaceSelection([], this);
-            return;
+      const cellInfo = { xKey, yKey, x, y, ox, oy, diagonal };
+      cells.push(cellInfo);
+      if (diagonal) {
+        appendWrappedLabel(g, xKey, (inner.left + inner.right) / 2,
+          (inner.top + inner.bottom) / 2, inner.right - inner.left - 6,
+          { className: "matrix-label matrix-dimension", fontSize: 10, onClick: displayDimension });
+      } else {
+        // Toutes les observations restent tracées dans leur cellule (pas d'échantillonnage).
+        const ctx = base.ctx;
+        ctx.fillStyle = colors.neutral;
+        ctx.globalAlpha = .62;
+        const pointSize = n > 15 ? 1.6 : 2.1;
+        for (const row of rows) {
+          if (!Number.isFinite(row[xKey]) || !Number.isFinite(row[yKey])) continue;
+          const px = ox + x(row[xKey]);
+          const py = oy + y(row[yKey]);
+          ctx.fillRect(px - pointSize / 2, py - pointSize / 2, pointSize, pointSize);
+        }
+        ctx.globalAlpha = 1;
+        const brush = d3.brush().extent([[inner.left, inner.top], [inner.right, inner.bottom]])
+          .on("end", function(event) {
+            if (!event.sourceEvent || !event.selection) return;
+            const [[bx0, by0], [bx1, by1]] = event.selection;
+            replaceSelection(rows.filter(d => Number.isFinite(d[xKey]) && Number.isFinite(d[yKey]) &&
+              x(d[xKey]) >= bx0 && x(d[xKey]) <= bx1 &&
+              y(d[yKey]) >= by0 && y(d[yKey]) <= by1).map(d => d.__id), this);
+          });
+        const brushGroup = g.append("g").attr("class", "brush").call(brush);
+        brushRefs.push({ node: brushGroup.node(), brush });
+        // Cliquer directement dans une case sélectionne le point gris ou bleu le plus proche.
+        // Les éléments SVG de brossage gèrent aussi le glisser-déposer.
+        brushGroup.on("click.point-pick", function(event) {
+          if (event.defaultPrevented || event.target.classList.contains("handle")) return;
+          const [px, py] = d3.pointer(event, g.node());
+          const maxDistanceSquared = 6.5 * 6.5;
+          let best = null, bestDistance = maxDistanceSquared;
+          for (const row of rows) {
+            if (!Number.isFinite(row[xKey]) || !Number.isFinite(row[yKey])) continue;
+            const dx = px - x(row[xKey]), dy = py - y(row[yKey]);
+            const distance = dx * dx + dy * dy;
+            if (distance <= bestDistance) {
+              // Pour Ctrl+clic à position identique, préférer un point non sélectionné.
+              const score = distance + ((event.ctrlKey || event.metaKey) && selected.has(row.__id) ? 10 : 0);
+              if (score <= bestDistance) { bestDistance = score; best = row; }
+            }
           }
-          const [[x0, y0], [x1, y1]] = event.selection;
-          const ids = rows.filter(d => Number.isFinite(d[xKey]) && Number.isFinite(d[yKey]) &&
-            x(d[xKey]) >= x0 && x(d[xKey]) <= x1 &&
-            y(d[yKey]) >= y0 && y(d[yKey]) <= y1).map(d => d.__id);
-          replaceSelection(ids, this);
+          if (!best) return;
+          if (event.ctrlKey || event.metaKey || event.shiftKey) toggleSelection(best.__id);
+          else replaceSelection([best.__id]);
         });
-      // Placer le brush avant les points conserve les clics sur les points.
-      const brushGroup = g.append("g").attr("class", "brush").call(brush);
-      brushRefs.push({ node: brushGroup.node(), brush });
-
-      g.selectAll(".point")
-        .data(rows.filter(d => Number.isFinite(d[xKey]) && Number.isFinite(d[yKey])))
-        .join("circle").attr("class", "point")
-        .attr("cx", d => x(d[xKey])).attr("cy", d => y(d[yKey]))
-        .on("click", (event, d) => {
-          event.stopPropagation();
-          if (event.ctrlKey || event.metaKey || event.shiftKey) toggleSelection(d.__id);
-          else replaceSelection([d.__id]);
-        })
-        .append("title")
-        .text(d => `Individu n° ${d.__id + 1}\n${xKey} : ${fmt(d[xKey])}\n${yKey} : ${fmt(d[yKey])}`);
-
-      // Graduations seulement sur le bord inférieur/gauche : lecture sans surcharge.
-      if (r === n - 1) {
-        g.append("g").attr("class", "axis")
-          .attr("transform", `translate(0,${inner.bottom})`)
-          .call(d3.axisBottom(x).ticks(3).tickSize(3).tickFormat(d3.format("~g")));
+        brushGroup.on("mouseenter.matrix-context mousemove.matrix-context", () => {
+          contextNode.textContent = `Horizontal : ${xKey}   |   Vertical : ${yKey}`;
+        }).on("mouseleave.matrix-context", () => { contextNode.textContent = defaultContext; });
+        brushGroup.append("title").text(`Axe X : ${xKey}\nAxe Y : ${yKey}`);
       }
-      if (c === 0) {
-        g.append("g").attr("class", "axis")
-          .attr("transform", `translate(${inner.left},0)`)
-          .call(d3.axisLeft(y).ticks(3).tickSize(3).tickFormat(d3.format("~g")));
-      }
-    }));
+      // Des graduations dans chaque case, et non seulement en bas ou à gauche.
+      const ticks = cell < 175 ? 2 : 3;
+      g.append("g").attr("class", "axis axis-matrix")
+        .attr("transform", `translate(0,${inner.bottom})`)
+        .call(d3.axisBottom(x).ticks(ticks).tickSize(3).tickPadding(4).tickFormat(d3.format(".2~s")));
+      g.append("g").attr("class", "axis axis-matrix")
+        .attr("transform", `translate(${inner.left},0)`)
+        .call(d3.axisLeft(y).ticks(ticks).tickSize(3).tickPadding(4).tickFormat(d3.format(".2~s")));
+    }
+    scatterState = { highlightedCanvas: highlight.canvas, highlightedCtx: highlight.ctx, cells, dpr };
+    const topScroll = document.getElementById("matrixTopScroll");
+    document.getElementById("matrixTopScrollWidth").style.width = `${width}px`;
+    const requiresScroll = width > viewportWidth + 2;
+    topScroll.hidden = !requiresScroll;
+    topScroll.onscroll = () => { if (Math.abs(scatterNode.scrollLeft - topScroll.scrollLeft) > 1) scatterNode.scrollLeft = topScroll.scrollLeft; };
+    scatterNode.onscroll = () => { if (Math.abs(topScroll.scrollLeft - scatterNode.scrollLeft) > 1) topScroll.scrollLeft = scatterNode.scrollLeft; };
+    drawScatterHighlights();
   }
 
   function drawParallel() {
     parallelNode.innerHTML = "";
     // Espacer les axes : leurs libellés, même longs, tiennent sur plusieurs lignes.
-    const axisGap = 205;
-    const axisLabelLines = Math.max(...dimensions.map(k => splitLines(k, 188).length));
-    const margin = { top: Math.max(112, Math.ceil(axisLabelLines * 13.5 + 36)), right: 133, bottom: 42, left: 133 };
+    const axisGap = 165;
+    const axisLabelLines = Math.max(...dimensions.map(k => splitLines(k, 150).length));
+    const margin = { top: Math.max(90, Math.ceil(axisLabelLines * 13.5 + 30)), right: 100, bottom: 42, left: 100 };
     const width = Math.max(parallelNode.clientWidth || 1100, (dimensions.length - 1) * axisGap + margin.left + margin.right);
     const height = margin.top + 426 + margin.bottom;
     const x = d3.scalePoint().domain(dimensions).range([margin.left, width - margin.right]);
@@ -378,7 +449,7 @@
     axes.append("g").attr("class", "axis")
       .each(function(key) { d3.select(this).call(d3.axisLeft(y[key]).ticks(6).tickFormat(d3.format("~g"))); });
     axes.each(function(key) {
-      appendWrappedLabel(d3.select(this), key, 0, margin.top / 2 - 6, 188,
+      appendWrappedLabel(d3.select(this), key, 0, margin.top / 2 - 6, 150,
         { className: "dimension-label", fontSize: 11, onClick: displayDimension });
     });
     axes.each(function(key) {

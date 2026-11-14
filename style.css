@@ -9,8 +9,8 @@
   --accent: #1765cb; /* Une seule couleur vive : les individus sélectionnés. */
 }
 * { box-sizing: border-box; }
-body { margin: 0; padding: 20px 24px 38px; }
-main { max-width: 1750px; margin: 0 auto; }
+body { margin: 0; padding: 16px 18px 28px; min-width: 0; }
+main { width: 100%; max-width: none; margin: 0 auto; }
 h1 { margin: 0 0 6px; font-size: 1.8rem; }
 h2 { margin: 0 0 7px; font-size: 1.16rem; }
 p { margin: 7px 0; }
@@ -19,13 +19,25 @@ p { margin: 7px 0; }
 header { margin-bottom: 18px; }
 .panel {
   margin: 0 0 18px;
-  padding: 20px;
+  padding: 15px;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 9px;
 }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .scroll-x { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 5px 0 14px; }
+.matrix-scroll { position: relative; }
+.matrix-stage { position: relative; background: #fff; }
+.matrix-canvas, .matrix-svg { position: absolute; left: 0; top: 0; display: block; }
+.matrix-canvas { pointer-events: none; }
+.matrix-svg { overflow: visible; }
+.matrix-context { min-height: 22px; padding: 4px 0; color: #47515b; font-size: .83rem; font-weight: 500; }
+.matrix-top-scroll { height: 17px; overflow-x: auto; overflow-y: hidden; }
+.matrix-top-scroll > div { height: 1px; }
+.matrix-top-scroll[hidden] { display: none; }
+.matrix-cell { stroke: #dee2e5; stroke-width: 1; }
+.axis-matrix text { font-size: 9.5px; }
+
 .scroll-x svg { display: block; flex-shrink: 0; max-width: none; }
 #distribution svg { display: block; max-width: none; }
 .axis path, .axis line { stroke: #aeb6bd; }
@@ -79,3 +91,9 @@ a:focus-visible { outline: 2px solid #58636f; outline-offset: 3px; }
 .matrix-label { fill: #39434d; font-weight: 600; }
 .dimension-label { fill: #39434d; font-weight: 600; }
 svg text { font-family: Arial, Helvetica, sans-serif; }
+
+/* Les graphiques sont disposés verticalement : le nombre de variables n'est pas limité. */
+section.panel { width: 100%; }
+#parallelCoordinates svg { max-width: none; }
+#distribution svg { width: 100%; height: auto; max-width: none; }
+@media (max-width: 800px) { .panel-head { display: block; } }
