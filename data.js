@@ -1,3 +1,4 @@
+//  lien vers le dataset : https://archive.ics.uci.edu/dataset/572/taiwanese+bankruptcy+prediction
  const data = [
   {
     "ROA(C) before interest and depreciation before interest": 0.370594257300249,
